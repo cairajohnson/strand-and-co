@@ -270,6 +270,108 @@ const QUICK_COLORS = [{
   hex: "#B7BDC3"
 }];
 const FINISH_TYPES = ["Stainless Steel", "Gold-filled", "Sterling Silver", "Brass", "Other"];
+
+// Maps common color words (including ones people naturally tag with) to one of the QUICK_COLORS buckets.
+const COLOR_TAG_SYNONYMS = {
+  red: "Red",
+  crimson: "Red",
+  maroon: "Red",
+  burgundy: "Red",
+  scarlet: "Red",
+  ruby: "Red",
+  orange: "Orange",
+  coral: "Orange",
+  peach: "Orange",
+  rust: "Orange",
+  terracotta: "Orange",
+  yellow: "Yellow",
+  gold: "Yellow",
+  golden: "Yellow",
+  mustard: "Yellow",
+  amber: "Yellow",
+  citrine: "Yellow",
+  green: "Green",
+  olive: "Green",
+  mint: "Green",
+  emerald: "Green",
+  sage: "Green",
+  forest: "Green",
+  jade: "Green",
+  blue: "Blue",
+  teal: "Blue",
+  turquoise: "Blue",
+  navy: "Blue",
+  cyan: "Blue",
+  aqua: "Blue",
+  cobalt: "Blue",
+  denim: "Blue",
+  indigo: "Indigo",
+  periwinkle: "Indigo",
+  violet: "Violet",
+  purple: "Violet",
+  lavender: "Violet",
+  lilac: "Violet",
+  plum: "Violet",
+  amethyst: "Violet",
+  pink: "Pink",
+  rose: "Pink",
+  blush: "Pink",
+  magenta: "Pink",
+  fuchsia: "Pink",
+  salmon: "Pink",
+  brown: "Brown",
+  tan: "Brown",
+  beige: "Brown",
+  copper: "Brown",
+  bronze: "Brown",
+  camel: "Brown",
+  chocolate: "Brown",
+  silver: "Silver",
+  gray: "Silver",
+  grey: "Silver",
+  white: "Silver",
+  black: "Silver",
+  clear: "Silver",
+  crystal: "Silver",
+  ivory: "Silver"
+};
+function colorGroupFromTags(tags) {
+  if (!tags) return null;
+  for (const tag of tags) {
+    const t = tag.trim().toLowerCase();
+    if (COLOR_TAG_SYNONYMS[t]) return COLOR_TAG_SYNONYMS[t];
+    // also catch a color word appearing inside a longer tag, e.g. "dusty blue"
+    for (const word of t.split(/\s+/)) {
+      if (COLOR_TAG_SYNONYMS[word]) return COLOR_TAG_SYNONYMS[word];
+    }
+  }
+  return null;
+}
+function hexToRgb(hex) {
+  try {
+    const f = parseInt(hex.slice(1), 16);
+    return [f >> 16, f >> 8 & 0xff, f & 0xff];
+  } catch {
+    return [128, 128, 128];
+  }
+}
+function nearestColorGroup(hex) {
+  const [r, g, b] = hexToRgb(hex || "#B8A9C9");
+  let best = QUICK_COLORS[0].name;
+  let bestDist = Infinity;
+  for (const c of QUICK_COLORS) {
+    const [cr, cg, cb] = hexToRgb(c.hex);
+    const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = c.name;
+    }
+  }
+  return best;
+}
+function resolveBeadColorGroup(bead) {
+  return colorGroupFromTags(bead.tags) || nearestColorGroup(bead.color);
+}
 function shade(hex, percent) {
   try {
     const f = parseInt(hex.slice(1), 16);
@@ -775,6 +877,51 @@ function ToastStack({
     className: "toast-check"
   }, "✓"), " ", t.message)));
 }
+function TagChipInput({
+  tags,
+  onChange,
+  placeholder = "Type a tag and press Enter…"
+}) {
+  const [tagInput, setTagInput] = useState("");
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "tag-input-row"
+  }, /*#__PURE__*/React.createElement("input", {
+    value: tagInput,
+    onChange: e => setTagInput(e.target.value),
+    onKeyDown: e => {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        const t = tagInput.trim();
+        if (t && !tags.includes(t)) onChange([...tags, t]);
+        setTagInput("");
+      } else if (e.key === "Backspace" && !tagInput && tags.length > 0) {
+        onChange(tags.slice(0, -1));
+      }
+    },
+    placeholder: placeholder
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    disabled: !tagInput.trim(),
+    onClick: () => {
+      const t = tagInput.trim();
+      if (t && !tags.includes(t)) onChange([...tags, t]);
+      setTagInput("");
+    }
+  }, /*#__PURE__*/React.createElement(Plus, {
+    size: 13
+  }), " Add")), tags.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "tag-chip-row"
+  }, tags.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    className: "tag-chip"
+  }, t, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => onChange(tags.filter(x => x !== t))
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 11
+  }))))));
+}
 function SizePresetChips({
   presets,
   selected,
@@ -968,6 +1115,7 @@ function BeadCharmManager() {
       const synced = beadMaterials.map(m => {
         const existing = byMaterialId.get(m.id);
         const price = m.avgCostPerUnit ? Number(m.avgCostPerUnit.toFixed(2)) : "";
+        const tags = m.tags || [];
         if (!existing) {
           changed = true;
           return {
@@ -980,17 +1128,19 @@ function BeadCharmManager() {
             finish: "Glass",
             shopSource: "",
             shopLink: m.shopLink || "",
-            pricePerBead: price
+            pricePerBead: price,
+            tags
           };
         }
-        const needsUpdate = existing.name !== m.name || existing.diameterMm !== (m.diameterMm || 6) || existing.shopLink !== (m.shopLink || "") || existing.pricePerBead !== price;
+        const needsUpdate = existing.name !== m.name || existing.diameterMm !== (m.diameterMm || 6) || existing.shopLink !== (m.shopLink || "") || existing.pricePerBead !== price || JSON.stringify(existing.tags || []) !== JSON.stringify(tags);
         if (needsUpdate) changed = true;
         return needsUpdate ? {
           ...existing,
           name: m.name,
           diameterMm: m.diameterMm || 6,
           shopLink: m.shopLink || "",
-          pricePerBead: price
+          pricePerBead: price,
+          tags
         } : existing;
       });
 
@@ -2517,7 +2667,6 @@ function MaterialModal({
     lastTotalPaid: d.lastTotalPaid ?? "",
     retroactiveAmount: ""
   });
-  const [tagInput, setTagInput] = useState("");
   const [customSize, setCustomSize] = useState(!!d.diameterMm && !sizePresets.includes(Number(d.diameterMm)));
   const [customStrandLength, setCustomStrandLength] = useState(!!d.strandLength && !STRAND_LENGTHS.includes(d.strandLength));
   const set = (k, v) => setForm(f => ({
@@ -2595,46 +2744,12 @@ function MaterialModal({
     value: f
   }, f)))), /*#__PURE__*/React.createElement(Field, {
     label: "Groups / tags (optional — style, color, strand type, anything you like)"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "tag-input-row"
-  }, /*#__PURE__*/React.createElement("input", {
-    value: tagInput,
-    onChange: e => setTagInput(e.target.value),
-    onKeyDown: e => {
-      if (e.key === "Enter" || e.key === ",") {
-        e.preventDefault();
-        const t = tagInput.trim();
-        if (t && !form.tags.includes(t)) set("tags", [...form.tags, t]);
-        setTagInput("");
-      } else if (e.key === "Backspace" && !tagInput && form.tags.length > 0) {
-        set("tags", form.tags.slice(0, -1));
-      }
-    },
-    placeholder: "Type a tag and press Enter…"
-  }), /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    className: "btn",
-    disabled: !tagInput.trim(),
-    onClick: () => {
-      const t = tagInput.trim();
-      if (t && !form.tags.includes(t)) set("tags", [...form.tags, t]);
-      setTagInput("");
-    }
-  }, /*#__PURE__*/React.createElement(Plus, {
-    size: 13
-  }), " Add")), form.tags.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "tag-chip-row"
-  }, form.tags.map(t => /*#__PURE__*/React.createElement("span", {
-    key: t,
-    className: "tag-chip"
-  }, t, /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    onClick: () => set("tags", form.tags.filter(x => x !== t))
-  }, /*#__PURE__*/React.createElement(X, {
-    size: 11
-  }))))), /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement(TagChipInput, {
+    tags: form.tags,
+    onChange: tags => set("tags", tags)
+  }), /*#__PURE__*/React.createElement("p", {
     className: "hint"
-  }, "Add as many tags as you like — press Enter or comma after each one. Use these to filter and locate materials fast.")), /*#__PURE__*/React.createElement(Field, {
+  }, "Add as many tags as you like — press Enter or comma after each one. Include a color word (like \"blue\" or \"teal\") and it'll help group this bead by color on the Design Board.")), /*#__PURE__*/React.createElement(Field, {
     label: "Size (optional)"
   }, /*#__PURE__*/React.createElement(SizePresetChips, {
     presets: sizePresets,
@@ -2908,6 +3023,7 @@ function VisualizerPanel({
   const loadedLayout = strandLayouts.find(l => l.id === loadedLayoutId);
   const [sizeFilter, setSizeFilter] = useState(null);
   const [paletteSearch, setPaletteSearch] = useState("");
+  const [collapsedColors, setCollapsedColors] = useState(new Set());
   const [showCostBreakdown, setShowCostBreakdown] = useState(false);
   const [componentToAdd, setComponentToAdd] = useState("");
   const [strandPickerLayout, setStrandPickerLayout] = useState(null);
@@ -2931,12 +3047,25 @@ function VisualizerPanel({
     const q = paletteSearch.trim().toLowerCase();
     if (q) {
       list = list.filter(b => {
-        const haystack = [b.name, b.shape, b.finish, b.shopSource].join(" ").toLowerCase();
+        const haystack = [b.name, b.shape, b.finish, b.shopSource, ...(b.tags || [])].join(" ").toLowerCase();
         return haystack.includes(q);
       });
     }
     return list;
   }, [beadPalette, sizeFilter, paletteSearch]);
+  const paletteByColor = useMemo(() => {
+    const groups = new Map(QUICK_COLORS.map(c => [c.name, []]));
+    for (const b of filteredPalette) {
+      const group = resolveBeadColorGroup(b);
+      if (!groups.has(group)) groups.set(group, []);
+      groups.get(group).push(b);
+    }
+    return QUICK_COLORS.map(c => ({
+      name: c.name,
+      hex: c.hex,
+      beads: groups.get(c.name) || []
+    })).filter(g => g.beads.length > 0);
+  }, [filteredPalette]);
   const activeStrandStats = useMemo(() => {
     let lengthMm = 0;
     for (const it of activeStrand) {
@@ -3315,63 +3444,88 @@ function VisualizerPanel({
   }, s, "mm"))), filteredPalette.length === 0 ? /*#__PURE__*/React.createElement(EmptyState, {
     text: "No beads match that search or size filter."
   }) : /*#__PURE__*/React.createElement("div", {
-    className: "palette-grid"
-  }, filteredPalette.map(b => {
-    const linkedMaterial = b.materialId ? materials.find(m => m.id === b.materialId) : null;
-    const lowStock = linkedMaterial && linkedMaterial.stockUnits <= linkedMaterial.lowStockThreshold;
+    className: "palette-color-groups"
+  }, paletteByColor.map(group => {
+    const isCollapsed = collapsedColors.has(group.name);
     return /*#__PURE__*/React.createElement("div", {
-      key: b.id,
-      className: "palette-swatch",
-      draggable: true,
-      onDragStart: e => handleDragStartPalette(e, b.id),
-      onClick: () => onAppendBead(b.id),
-      title: `Click to add to Strand ${activeStrandIndex + 1}, or drag it into place`
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "swatch-actions"
+      key: group.name,
+      className: "palette-color-group"
     }, /*#__PURE__*/React.createElement("button", {
-      className: "icon-btn",
-      onClick: e => {
-        e.stopPropagation();
-        onEditBead(b);
+      type: "button",
+      className: "palette-color-group-head",
+      onClick: () => setCollapsedColors(prev => {
+        const next = new Set(prev);
+        if (next.has(group.name)) next.delete(group.name);else next.add(group.name);
+        return next;
+      })
+    }, /*#__PURE__*/React.createElement("span", {
+      className: `section-chevron ${isCollapsed ? "section-chevron--collapsed" : ""}`
+    }, "▾"), /*#__PURE__*/React.createElement("span", {
+      className: "palette-color-dot",
+      style: {
+        background: group.hex
       }
-    }, /*#__PURE__*/React.createElement(Pencil, {
-      size: 12
-    })), !b.materialId && /*#__PURE__*/React.createElement("button", {
-      className: "icon-btn",
-      onClick: e => {
-        e.stopPropagation();
-        onDeleteBead(b.id);
-      }
-    }, /*#__PURE__*/React.createElement(Trash2, {
-      size: 12
-    }))), /*#__PURE__*/React.createElement(BeadCircle, {
-      bead: b,
-      size: 38,
-      uidSuffix: "palette"
-    }), /*#__PURE__*/React.createElement("div", {
-      className: "swatch-name"
-    }, b.name), /*#__PURE__*/React.createElement("div", {
-      className: "swatch-sub"
-    }, "Ø", b.diameterMm, "mm · ", b.finish), linkedMaterial && /*#__PURE__*/React.createElement("div", {
-      className: `swatch-stock ${lowStock ? "swatch-stock--low" : ""}`
-    }, /*#__PURE__*/React.createElement(Gem, {
-      size: 11
-    }), " ", num(linkedMaterial.stockUnits, 0), " in stock"), (b.shopSource || b.pricePerBead || b.shopLink) && /*#__PURE__*/React.createElement("div", {
-      className: "swatch-meta"
-    }, b.shopSource && /*#__PURE__*/React.createElement("span", {
-      className: "pill"
-    }, b.shopSource), b.pricePerBead ? /*#__PURE__*/React.createElement("span", {
-      className: "mono"
-    }, money(Number(b.pricePerBead))) : null, b.shopLink && /*#__PURE__*/React.createElement("a", {
-      href: b.shopLink,
-      target: "_blank",
-      rel: "noreferrer",
-      onClick: e => e.stopPropagation(),
-      className: "icon-btn",
-      title: "Open product page"
-    }, /*#__PURE__*/React.createElement(Link2, {
-      size: 12
-    }))));
+    }), group.name, /*#__PURE__*/React.createElement("span", {
+      className: "materials-count-badge"
+    }, group.beads.length)), !isCollapsed && /*#__PURE__*/React.createElement("div", {
+      className: "palette-grid"
+    }, group.beads.map(b => {
+      const linkedMaterial = b.materialId ? materials.find(m => m.id === b.materialId) : null;
+      const lowStock = linkedMaterial && linkedMaterial.stockUnits <= linkedMaterial.lowStockThreshold;
+      return /*#__PURE__*/React.createElement("div", {
+        key: b.id,
+        className: "palette-swatch",
+        draggable: true,
+        onDragStart: e => handleDragStartPalette(e, b.id),
+        onClick: () => onAppendBead(b.id),
+        title: `Click to add to Strand ${activeStrandIndex + 1}, or drag it into place`
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "swatch-actions"
+      }, /*#__PURE__*/React.createElement("button", {
+        className: "icon-btn",
+        onClick: e => {
+          e.stopPropagation();
+          onEditBead(b);
+        }
+      }, /*#__PURE__*/React.createElement(Pencil, {
+        size: 12
+      })), !b.materialId && /*#__PURE__*/React.createElement("button", {
+        className: "icon-btn",
+        onClick: e => {
+          e.stopPropagation();
+          onDeleteBead(b.id);
+        }
+      }, /*#__PURE__*/React.createElement(Trash2, {
+        size: 12
+      }))), /*#__PURE__*/React.createElement(BeadCircle, {
+        bead: b,
+        size: 38,
+        uidSuffix: "palette"
+      }), /*#__PURE__*/React.createElement("div", {
+        className: "swatch-name"
+      }, b.name), /*#__PURE__*/React.createElement("div", {
+        className: "swatch-sub"
+      }, "Ø", b.diameterMm, "mm · ", b.finish), linkedMaterial && /*#__PURE__*/React.createElement("div", {
+        className: `swatch-stock ${lowStock ? "swatch-stock--low" : ""}`
+      }, /*#__PURE__*/React.createElement(Gem, {
+        size: 11
+      }), " ", num(linkedMaterial.stockUnits, 0), " in stock"), (b.shopSource || b.pricePerBead || b.shopLink) && /*#__PURE__*/React.createElement("div", {
+        className: "swatch-meta"
+      }, b.shopSource && /*#__PURE__*/React.createElement("span", {
+        className: "pill"
+      }, b.shopSource), b.pricePerBead ? /*#__PURE__*/React.createElement("span", {
+        className: "mono"
+      }, money(Number(b.pricePerBead))) : null, b.shopLink && /*#__PURE__*/React.createElement("a", {
+        href: b.shopLink,
+        target: "_blank",
+        rel: "noreferrer",
+        onClick: e => e.stopPropagation(),
+        className: "icon-btn",
+        title: "Open product page"
+      }, /*#__PURE__*/React.createElement(Link2, {
+        size: 12
+      }))));
+    })));
   })))), /*#__PURE__*/React.createElement(Card, null, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement(FolderOpen, {
@@ -3546,7 +3700,8 @@ function BeadModal({
     finish: d.finish || "Glass",
     shopSource: d.shopSource || "",
     shopLink: d.shopLink || "",
-    pricePerBead: d.pricePerBead ?? ""
+    pricePerBead: d.pricePerBead ?? "",
+    tags: d.tags || []
   });
   const [customSize, setCustomSize] = useState(!sizePresets.includes(Number(form.diameterMm)));
   const set = (k, v) => setForm(f => ({
@@ -3681,7 +3836,26 @@ function BeadModal({
     disabled: isLinked,
     onChange: e => set("shopLink", e.target.value),
     placeholder: "Paste the product page URL"
-  })), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(Field, {
+    label: "Groups / tags (optional — include a color word to help with color grouping)"
+  }, isLinked ? /*#__PURE__*/React.createElement(React.Fragment, null, form.tags.length > 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "tag-chip-row"
+  }, form.tags.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    className: "tag-chip"
+  }, t))) : /*#__PURE__*/React.createElement("p", {
+    className: "hint",
+    style: {
+      margin: 0
+    }
+  }, "No tags yet — add some on this bead's material in Materials."), /*#__PURE__*/React.createElement("p", {
+    className: "hint"
+  }, "Synced from this bead's material — edit tags there.")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(TagChipInput, {
+    tags: form.tags,
+    onChange: tags => set("tags", tags)
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "hint"
+  }, "e.g. \"blue\", \"teal\", \"boho\" — a color word here helps group this bead by color on the Design Board."))), /*#__PURE__*/React.createElement("div", {
     className: "modal-actions"
   }, /*#__PURE__*/React.createElement("button", {
     className: "btn",
@@ -4595,6 +4769,9 @@ const BASE_CSS = `
 .strand-slot:hover .strand-remove { opacity: 1; }
 
 .palette-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap:12px; }
+.palette-color-groups { display:flex; flex-direction:column; gap:18px; }
+.palette-color-group-head { display:flex; align-items:center; gap:8px; background:none; border:none; cursor:pointer; padding:0 0 10px; font-family: var(--font-display); font-size:15px; font-weight:600; color: var(--ink); width:100%; }
+.palette-color-dot { width:14px; height:14px; border-radius:50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.15); flex-shrink:0; }
 .palette-swatch { position:relative; display:flex; flex-direction:column; align-items:center; gap:4px; padding: 14px 8px 10px; border:1px solid var(--line); border-radius:12px; cursor:pointer; text-align:center; background: white; transition: box-shadow .12s, border-color .12s; }
 .palette-swatch:hover { border-color: var(--rose); box-shadow: 0 2px 8px rgba(184,92,107,0.15); }
 .swatch-actions { position:absolute; top:4px; right:4px; display:flex; gap:2px; opacity:0; transition:opacity .12s; }
